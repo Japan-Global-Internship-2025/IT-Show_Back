@@ -21,6 +21,14 @@ export class TravelService {
     ) { }
 
     async create(user: any, createTravelDto: CreateTravelDto) {
+        if (createTravelDto.travel_start_date > createTravelDto.travel_end_date) {
+            throw new BadRequestException('여행 시작 날짜는 종료 날짜보다 이전이어야 합니다.');
+        }
+
+        if (createTravelDto.travel_budget < 10000 || createTravelDto.travel_budget > 2000000000) {
+            throw new BadRequestException('여행 예산은 10,000원 이상, 2,000,000,000원 이하이어야 합니다.');
+        }
+
         const region_name = createTravelDto.travel_region;
         const region_id = await this.travelRegionRepository.findOne({
             where: { region: region_name as any },
