@@ -14,9 +14,21 @@ import axios from 'axios';
 
 import { SaveTotalPlanDto } from './dto/save-total-plan.dto';
 
+const tasteValue = {
+    '1': '쇼핑',
+    '2': '맛집탐방',
+    '3': '유적지',
+    '4': '예술관람',
+    '5': '체험·액티비티',
+    '6': '호캉스',
+    '7': '공연·페스티벌',
+    '8': '자연감상',
+    '9': '포토존'
+}
+
 @Injectable()
 export class PlannerService {
-    private groq: Groq;
+    // private groq: Groq;
     private readonly tavily;
     private readonly genai;
 
@@ -28,9 +40,17 @@ export class PlannerService {
         @InjectRepository(Travel)
         private travelRepository: Repository<Travel>,
     ) {
-        this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+        // this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
         this.tavily = tavily({ apiKey: process.env.TAVILY_API_KEY });
         this.genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+
+    private user_tasteToString(taste: number[] | undefined): string {
+        // console.log('원본 사용자 취향 데이터:', taste); // 디버깅을 위한 원본 데이터 출력
+        if (!taste || taste.length === 0) return '없음';
+        const user_taste = taste.map(t => tasteValue[t] || `알 수 없는 취향(${t})`);
+        // console.log('사용자 취향:', user_taste); // 디버깅을 위한 사용자 취향 출력
+        return user_taste.join(', ');
     }
 
     // 해당 여행이 요청 사용자 소유인지 검증
@@ -153,30 +173,36 @@ export class PlannerService {
             throw new NotFoundException('해당 여행 정보를 찾을 수 없습니다.');
         }
 
+        const user_taste: string[] = [];
+        for (const key in tasteValue) {
+            user_taste.push(tasteValue[key]);
+        }
+
         const prompt = `
-      다음 [여행 정보]를 바탕으로 전체 여행 기간(${travelInfo.travel_start_date.toISOString().split('T')[0]} ~ ${travelInfo.travel_end_date.toISOString().split('T')[0]}) 동안의 대략적인 일정을 짜줘.
-      각 날짜별로 어디를 가면 좋을지(ex. 나고야역 주변, 사카에 등) 짧은 요약을 만들어줘. 무조건 이 기간안에 해야해.
+        다음 [여행 정보]를 바탕으로 전체 여행 기간(${travelInfo.travel_start_date.toISOString().split('T')[0]} ~ ${travelInfo.travel_end_date.toISOString().split('T')[0]}) 동안의 대략적인 일정을 짜줘.
+        각 날짜별로 어디를 가면 좋을지(ex. 나고야역 주변, 사카에 등) 짧은 요약을 만들어줘. 무조건 이 기간안에 해야해.
 
-      [여행 정보]
-      - 여행 지역: ${travelInfo.travel_region}
-      - 사용자 취향: ${travelInfo.user.taste}
-      - 숙소 정보: ${travelInfo.lodging_info || '미정'}
+        [여행 정보]
+        - 여행 지역: ${travelInfo.travel_region}
+        - 사용자 취향: ${this.user_tasteToString(travelInfo.user.taste)}
+        - 숙소 정보: ${travelInfo.lodging_info || '미정'}
 
-      응답은 반드시 한국어로 하고, 아래 구조의 JSON 배열을 포함하는 객체여야 해:
-      {
-        "dailyPlans": [
-          {
-            "plan_date": "YYYY-MM-DD",
-            "place": "해당 날짜에 가면 좋을 장소나 지역 (예: 나고야역 주변)",
-            "category": "카테고리(예: 관광·역주변, 쇼핑·번화가, 음식·맛집 등)",
-            "daily_description": "해당 날짜의 대략적인 일정 설명 (ex. 나고야역 중심의 쇼핑과 먹거리 투어)",
-            "latitude": 해당 장소의 위도 (숫자형, 예: 35.1706),
-            "longitude": 해당 장소의 경도 (숫자형, 예: 136.9067)
-          }
-        ]
-      }
-      * 위경도는 place에 해당하는 실제 위치를 최대한 정확하게 넣어줘.
-    `;
+        응답은 반드시 한국어로 하고, 아래 구조의 JSON 배열을 포함하는 객체여야 해:
+        {
+            "dailyPlans": [
+            {
+                "plan_date": "YYYY-MM-DD",
+                "place": "해당 날짜에 가면 좋을 장소나 지역 (예: 나고야역 주변)",
+                "category": "카테고리(예: 관광·역주변, 쇼핑·번화가, 음식·맛집 등)",
+                "daily_description": "해당 날짜의 대략적인 일정 설명 (ex. 나고야역 중심의 쇼핑과 먹거리 투어)",
+                "latitude": 해당 장소의 위도 (숫자형, 예: 35.1706),
+                "longitude": 해당 장소의 경도 (숫자형, 예: 136.9067)
+            }
+            ]
+        }
+        * 위경도는 place에 해당하는 실제 위치를 최대한 정확하게 넣어줘.
+        `;
+        // console.log('생성된 프롬프트:', prompt); // 디버깅을 위한 프롬프트 출력
 
         try {
             const aiResponseText = await this.generateItinerary(prompt);
@@ -329,57 +355,62 @@ export class PlannerService {
     // 💡 인자에 daily_description: string | undefined 이 추가되었습니다.
     private buildPrompt(createPlannerDto: CreatePlannerDto, travel: any, searchContext: string, dailyDescription?: string | null, visitedPlaces: string[] = []): string {
         // console.log('여행 정보:', JSON.stringify(travel, null, 2));
+        const user_taste: string[] = [];
+        for (const key in tasteValue) {
+            user_taste.push(tasteValue[key]);
+        }
+
         return `
-      다음 [여행 배경 정보], [오늘의 대략적인 일정], 그리고 [오늘의 요구사항]을 바탕으로 최적의 상세 일정을 짜줘. 
-      사용자의 여행 배경과 실시간 검색 데이터를 바탕으로 최적의 일정을 짜줘.
+        다음 [여행 배경 정보], [오늘의 대략적인 일정], 그리고 [오늘의 요구사항]을 바탕으로 최적의 상세 일정을 짜줘. 
+        사용자의 여행 배경과 실시간 검색 데이터를 바탕으로 최적의 일정을 짜줘.
 
-      [실시간 검색 정보]
-      ${searchContext}
+        [실시간 검색 정보]
+        ${searchContext}
 
-      [여행 배경 정보]
-      - 여행 지역: ${travel.travel_region}
-      - 총 여행 기간: ${travel.travel_start_date.toISOString().split('T')[0]} ~ ${travel.travel_end_date.toISOString().split('T')[0]}
-      - 총 여행 예산: ${travel.travel_budget}
-      - 숙소 정보(위치): ${travel.lodging_info || '아직 미정'}
-      - 사용자 여행 취향: ${travel.user.taste}
-      - 총 여행 플래너 장소: ${travel.places ? travel.places.join(', ') : '없음'}
-      - 이미 방문한 장소(중복 추천 자제): ${visitedPlaces.length > 0 ? visitedPlaces.join(', ') : '없음'}
+        [여행 배경 정보]
+        - 여행 지역: ${travel.travel_region}
+        - 총 여행 기간: ${travel.travel_start_date.toISOString().split('T')[0]} ~ ${travel.travel_end_date.toISOString().split('T')[0]}
+        - 총 여행 예산: ${travel.travel_budget}
+        - 숙소 정보(위치): ${travel.lodging_info || '아직 미정'}
+        - 사용자 여행 취향: ${this.user_tasteToString(travel.user.taste)}
+        - 총 여행 플래너 장소: ${travel.places ? travel.places.join(', ') : '없음'}
+        - 이미 방문한 장소(중복 추천 자제): ${visitedPlaces.length > 0 ? visitedPlaces.join(', ') : '없음'}
 
-      [오늘의 대략적인 일정]
-      - ${dailyDescription || '없음 (네가 자유롭게 추천해줘)'}
+        [오늘의 대략적인 일정]
+        - ${dailyDescription || '없음 (네가 자유롭게 추천해줘)'}
 
-      [오늘의 요구사항]
-      - 일정 날짜: ${createPlannerDto.plan_date}
-      - 활동 가능 시간: ${createPlannerDto.start_time} ~ ${createPlannerDto.end_time}
-      - 특별 요청사항: ${createPlannerDto.ai_request || '없음'}
+        [오늘의 요구사항]
+        - 일정 날짜: ${createPlannerDto.plan_date}
+        - 활동 가능 시간: ${createPlannerDto.start_time} ~ ${createPlannerDto.end_time}
+        - 특별 요청사항: ${createPlannerDto.ai_request || '없음'}
 
-      [플래닝 가이드라인]
-      1. 동선 최적화: 숙소 위치(${travel.lodging_info})와 이동 시간을 고려하여 현실적인 동선으로 짤 것.
-      2. 취향 반영: 사용자의 여행 취향(${travel.user.taste})을 적극 반영한 장소를 추천할 것.
-      3. 대략적인 일정 준수: 오늘의 대략적인 일정(${dailyDescription || ''})이 있다면 그 흐름에 맞게 상세 일정을 구성할 것.
-      4. 예산 고려: 총 예산을 고려하여 너무 과도한 지출이 발생하지 않는 선에서 카테고리(식사/쇼핑 등)를 분배할 것.
-      5. 중복 자제: [이미 방문한 장소] 목록에 있는 곳은 오늘 일정에서 자제할 것.
-      6. 첫날은 숙소 주변에서 가볍게 시작하는 것을 추천. 마지막 날은 공항이나 역 근처에서 마무리하는 것을 추천.
-      7. 장소 추천 시, 실제 존재하는 장소로만 짤 것. 그리고 위경도 정보도 최대한 정확하게 알려줄 것.
-      8. 약 5~10개의 장소를 추천해주되, 사용자의 요청사항 및 활동 가능 시간에 따라 유동적으로 조절할 것. (예: 식사 위주, 쇼핑 위주 등)
+        [플래닝 가이드라인]
+        1. 동선 최적화: 숙소 위치(${travel.lodging_info})와 이동 시간을 고려하여 현실적인 동선으로 짤 것.
+        2. 취향 반영: 사용자의 여행 취향을 적극 반영한 장소를 추천할 것.
+        3. 대략적인 일정 준수: 오늘의 대략적인 일정(${dailyDescription || ''})이 있다면 그 흐름에 맞게 상세 일정을 구성할 것.
+        4. 예산 고려: 총 예산을 고려하여 너무 과도한 지출이 발생하지 않는 선에서 카테고리(식사/쇼핑 등)를 분배할 것.
+        5. 중복 자제: [이미 방문한 장소] 목록에 있는 곳은 오늘 일정에서 자제할 것.
+        6. 첫날은 숙소 주변에서 가볍게 시작하는 것을 추천. 마지막 날은 공항이나 역 근처에서 마무리하는 것을 추천.
+        7. 장소 추천 시, 실제 존재하는 장소로만 짤 것. 그리고 위경도 정보도 최대한 정확하게 알려줄 것.
+        8. 약 5~10개의 장소를 추천해주되, 사용자의 요청사항 및 활동 가능 시간에 따라 유동적으로 조절할 것. (예: 식사 위주, 쇼핑 위주 등)
 
-      응답은 반드시 아래 구조의 JSON 배열을 포함하는 객체여야 해:
-      {
-        "itinerary": [
-          {
-            "visit_time": "HH:mm",
-            "place_name": "장소 이름",
-            "category": "(예: 식사·인기, 쇼핑·역주변)",
-            "description": "사용자의 취향과 부합하는지 1~2문장의 설명",
-            "latitude": "숫자형 위도",
-            "longitude": "숫자형 경도",
-            "location": "장소의 주소",
-            "image_url": "장소의 특징을 나타내는 영어 단어 1개(예: 'sushi', 'temple')" 
-          }
-        ]
-      }
-      * 주의: 실제 존재하는 장소로 짜고, 위경도는 최대한 정확하게 알려줘. 그리고 한국어로 대답해.
-    `;
+        응답은 반드시 아래 구조의 JSON 배열을 포함하는 객체여야 해:
+        {
+            "itinerary": [
+            {
+                "visit_time": "HH:mm",
+                "place_name": "장소 이름",
+                "category": "(예: 식사·인기, 쇼핑·역주변)",
+                "description": "사용자의 취향과 부합하는지 1~2문장의 설명",
+                "latitude": "숫자형 위도",
+                "longitude": "숫자형 경도",
+                "location": "장소의 주소",
+                "image_url": "장소의 특징을 나타내는 영어 단어 1개(예: 'sushi', 'temple')" 
+            }
+            ]
+        }
+        * 주의: 실제 존재하는 장소로 짜고, 위경도는 최대한 정확하게 알려줘. 그리고 한국어로 대답해.
+        `;
     }
 
 

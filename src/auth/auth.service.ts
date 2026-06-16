@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
@@ -17,6 +17,12 @@ export class AuthService {
   
   async create(createUserDto: CreateUserDto) {
     console.log('Received CreateUserDto:', createUserDto);
+
+    const existingUser = await this.userRepository.findOne({ where: { user_id: createUserDto.user_id } });
+    if (existingUser) {
+      throw new ConflictException('이미 존재하는 아이디입니다.');
+    }
+
     const { user_pw, ...userData } = createUserDto;
     const hashedPassword = await bcrypt.hash(user_pw, 12);
     const user = this.userRepository.create({ ...userData, user_pw: hashedPassword });

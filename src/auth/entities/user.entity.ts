@@ -16,8 +16,8 @@ export class User {
     @Column({ length: 50 })
     user_email!: string;
 
-    @Column({ length: 30 })
-    taste!: string;
+    @Column({ type: 'simple-array', nullable: true })
+    taste!: number[] | [];
 
     @Column({ type: 'int', nullable: true })
     lastest_travel_id!: number | null;
